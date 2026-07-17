@@ -6,27 +6,58 @@ import { SegmentFilters } from '@/components/input/SegmentFilters';
 
 export interface FilterEditFormProps {
   websiteId?: string;
-  onChange?: (params: { filters: any[]; segment?: string; cohort?: string }) => void;
+  onChange?: (params: {
+    filters: any[];
+    segment?: string;
+    cohort?: string;
+    match?: string;
+  }) => void;
   onClose?: () => void;
 }
 
 export function FilterEditForm({ websiteId, onChange, onClose }: FilterEditFormProps) {
   const {
-    query: { segment, cohort },
+    query: { segment, cohort, match },
     pathname,
   } = useNavigation();
   const { filters } = useFilters();
-  const { formatMessage, labels } = useMessages();
+  const { t, labels } = useMessages();
   const [currentFilters, setCurrentFilters] = useState(filters);
   const [currentSegment, setCurrentSegment] = useState(segment);
   const [currentCohort, setCurrentCohort] = useState(cohort);
+  const [currentMatch, setCurrentMatch] = useState<string>(match || 'all');
   const { isMobile } = useMobile();
-  const excludeFilters = pathname.includes('/pixels') || pathname.includes('/links');
+  const isPixelLink = !websiteId || pathname.includes('/pixels') || pathname.includes('/links');
+  const excludeEvent =
+    !pathname.endsWith('/events') &&
+    !pathname.endsWith('/replays') &&
+    !pathname.endsWith('/heatmaps');
+  const isPerformance = pathname.includes('/performance');
+
+  const excludedFields = isPixelLink
+    ? ['path', 'title', 'hostname', 'distinctId', 'tag', 'event']
+    : isPerformance
+      ? [
+          'referrer',
+          'query',
+          'event',
+          'tag',
+          'distinctId',
+          'utmSource',
+          'utmMedium',
+          'utmCampaign',
+          'utmContent',
+          'utmTerm',
+        ]
+      : excludeEvent
+        ? ['event']
+        : [];
 
   const handleReset = () => {
     setCurrentFilters([]);
     setCurrentSegment(undefined);
     setCurrentCohort(undefined);
+    setCurrentMatch('all');
   };
 
   const handleSave = () => {
@@ -34,6 +65,7 @@ export function FilterEditForm({ websiteId, onChange, onClose }: FilterEditFormP
       filters: currentFilters.filter(f => f.value),
       segment: currentSegment,
       cohort: currentCohort,
+      match: currentMatch !== 'all' ? currentMatch : undefined,
     });
     onClose?.();
   };
@@ -43,50 +75,64 @@ export function FilterEditForm({ websiteId, onChange, onClose }: FilterEditFormP
     setCurrentCohort(type === 'cohort' ? id : undefined);
   };
 
+  const panelStyle = { overflowY: 'auto' as const, minHeight: 0 };
+
   return (
-    <Column width={isMobile ? 'auto' : '800px'} gap="6">
-      <Column minHeight="500px">
-        <Tabs>
-          <TabList>
-            <Tab id="fields">{formatMessage(labels.fields)}</Tab>
-            {!excludeFilters && (
-              <>
-                <Tab id="segments">{formatMessage(labels.segments)}</Tab>
-                <Tab id="cohorts">{formatMessage(labels.cohorts)}</Tab>
-              </>
-            )}
-          </TabList>
-          <TabPanel id="fields">
-            <FieldFilters
-              websiteId={websiteId}
-              value={currentFilters}
-              onChange={setCurrentFilters}
-              exclude={excludeFilters ? ['path', 'title', 'hostname', 'tag', 'event'] : []}
-            />
-          </TabPanel>
-          <TabPanel id="segments">
-            <SegmentFilters
-              websiteId={websiteId}
-              segmentId={currentSegment}
-              onChange={handleSegmentChange}
-            />
-          </TabPanel>
-          <TabPanel id="cohorts">
-            <SegmentFilters
-              type="cohort"
-              websiteId={websiteId}
-              segmentId={currentCohort}
-              onChange={handleSegmentChange}
-            />
-          </TabPanel>
-        </Tabs>
-      </Column>
-      <Row alignItems="center" justifyContent="space-between" gap>
-        <Button onPress={handleReset}>{formatMessage(labels.reset)}</Button>
+    <Column width={isMobile ? 'auto' : '800px'} gap="6" style={{ flex: 1, minHeight: 0 }}>
+      <Tabs
+        style={{
+          flex: 1,
+          minHeight: 0,
+          gridTemplateRows: 'auto 1fr',
+          overflow: 'hidden',
+        }}
+      >
+        <TabList>
+          <Tab id="fields">{t(labels.fields)}</Tab>
+          {!isPixelLink && (
+            <>
+              <Tab id="segments">{t(labels.segments)}</Tab>
+              <Tab id="cohorts">{t(labels.cohorts)}</Tab>
+            </>
+          )}
+        </TabList>
+        <TabPanel id="fields" style={panelStyle}>
+          <FieldFilters
+            websiteId={websiteId}
+            value={currentFilters}
+            match={currentMatch}
+            onChange={setCurrentFilters}
+            onMatchChange={setCurrentMatch}
+            exclude={excludedFields}
+          />
+        </TabPanel>
+        <TabPanel id="segments" style={panelStyle}>
+          <SegmentFilters
+            websiteId={websiteId}
+            segmentId={currentSegment}
+            onChange={handleSegmentChange}
+          />
+        </TabPanel>
+        <TabPanel id="cohorts" style={panelStyle}>
+          <SegmentFilters
+            type="cohort"
+            websiteId={websiteId}
+            segmentId={currentCohort}
+            onChange={handleSegmentChange}
+          />
+        </TabPanel>
+      </Tabs>
+      <Row
+        alignItems="center"
+        justifyContent="space-between"
+        gap
+        style={isMobile ? { paddingBottom: '16px' } : undefined}
+      >
+        <Button onPress={handleReset}>{t(labels.reset)}</Button>
         <Row alignItems="center" justifyContent="flex-end" gridColumn="span 2" gap>
-          <Button onPress={onClose}>{formatMessage(labels.cancel)}</Button>
+          <Button onPress={onClose}>{t(labels.cancel)}</Button>
           <Button variant="primary" onPress={handleSave}>
-            {formatMessage(labels.apply)}
+            {t(labels.apply)}
           </Button>
         </Row>
       </Row>

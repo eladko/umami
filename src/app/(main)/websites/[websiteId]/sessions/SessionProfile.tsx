@@ -1,3 +1,4 @@
+'use client';
 import {
   Button,
   Column,
@@ -16,19 +17,22 @@ import { useMessages, useWebsiteSessionQuery } from '@/components/hooks';
 import { SessionActivity } from './SessionActivity';
 import { SessionData } from './SessionData';
 import { SessionInfo } from './SessionInfo';
+import { SessionReplaysDataTable } from './SessionReplaysDataTable';
 import { SessionStats } from './SessionStats';
 
 export function SessionProfile({
   websiteId,
   sessionId,
+  showReplays = true,
   onClose,
 }: {
   websiteId: string;
   sessionId: string;
+  showReplays?: boolean;
   onClose?: () => void;
 }) {
   const { data, isLoading, error } = useWebsiteSessionQuery(websiteId, sessionId);
-  const { formatMessage, labels } = useMessages();
+  const { t, labels } = useMessages();
 
   return (
     <LoadingPanel
@@ -61,8 +65,9 @@ export function SessionProfile({
 
             <Tabs>
               <TabList>
-                <Tab id="activity">{formatMessage(labels.activity)}</Tab>
-                <Tab id="properties">{formatMessage(labels.properties)}</Tab>
+                <Tab id="activity">{t(labels.activity)}</Tab>
+                <Tab id="properties">{t(labels.properties)}</Tab>
+                {showReplays && <Tab id="replays">{t(labels.replays)}</Tab>}
               </TabList>
               <TabPanel id="activity">
                 <SessionActivity
@@ -75,6 +80,11 @@ export function SessionProfile({
               <TabPanel id="properties">
                 <SessionData sessionId={sessionId} websiteId={websiteId} />
               </TabPanel>
+              {showReplays && (
+                <TabPanel id="replays">
+                  <SessionReplaysDataTable websiteId={websiteId} sessionId={sessionId} />
+                </TabPanel>
+              )}
             </Tabs>
           </Column>
         </Column>

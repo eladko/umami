@@ -1,10 +1,9 @@
-import { startOfHour, startOfMonth } from 'date-fns';
+import { startOfHour } from 'date-fns';
 import { isbot } from 'isbot';
-import { serializeError } from 'serialize-error';
 import { z } from 'zod';
 import clickhouse from '@/lib/clickhouse';
-import { COLLECTION_TYPE, EVENT_TYPE } from '@/lib/constants';
-import { hash, secret, uuid } from '@/lib/crypto';
+import { CACHE_TOKEN_TYPE, COLLECTION_TYPE, EVENT_TYPE } from '@/lib/constants';
+import { getSalt, hash, secret, uuid } from '@/lib/crypto';
 import { getClientInfo, hasBlockedIp } from '@/lib/detect';
 import { createToken, parseToken } from '@/lib/jwt';
 import { fetchWebsite } from '@/lib/load';
@@ -21,22 +20,30 @@ interface Cache {
   iat: number;
 }
 
+// Reject strings whose first character is a spreadsheet formula trigger to
+// prevent CSV formula injection in analytics exports (defense-in-depth).
+const FORMULA_TRIGGER_RE = /^[=+\-@\t\r]/;
+const safeStringParam = () =>
+  z.string().refine(val => !FORMULA_TRIGGER_RE.test(val), {
+    message: 'Value must not start with =, +, -, @, tab, or carriage return',
+  });
+
 const schema = z.object({
-  type: z.enum(['event', 'identify']),
+  type: z.enum(['event', 'identify', 'performance']),
   payload: z
     .object({
       website: z.uuid().optional(),
       link: z.uuid().optional(),
       pixel: z.uuid().optional(),
       data: anyObjectParam.optional(),
-      hostname: z.string().max(100).optional(),
-      language: z.string().max(35).optional(),
+      hostname: z.string().optional(),
+      language: z.string().optional(),
       referrer: urlOrPathParam.optional(),
-      screen: z.string().max(11).optional(),
+      screen: z.string().optional(),
       title: z.string().optional(),
       url: urlOrPathParam.optional(),
-      name: z.string().max(50).optional(),
-      tag: z.string().max(50).optional(),
+      name: safeStringParam().optional(),
+      tag: safeStringParam().optional(),
       ip: z.string().optional(),
       userAgent: z.string().optional(),
       timestamp: z.coerce.number().int().optional(),
@@ -44,6 +51,11 @@ const schema = z.object({
       browser: z.string().optional(),
       os: z.string().optional(),
       device: z.string().optional(),
+      lcp: z.number().nonnegative().max(60000).optional(),
+      inp: z.number().nonnegative().max(60000).optional(),
+      cls: z.number().nonnegative().max(100).optional(),
+      fcp: z.number().nonnegative().max(60000).optional(),
+      ttfb: z.number().nonnegative().max(60000).optional(),
     })
     .refine(
       data => {
@@ -83,6 +95,11 @@ export async function POST(request: Request) {
       tag,
       timestamp,
       id,
+      lcp,
+      inp,
+      cls,
+      fcp,
+      ttfb,
     } = payload;
 
     const sourceId = websiteId || pixelId || linkId;
@@ -96,7 +113,7 @@ export async function POST(request: Request) {
       if (cacheHeader) {
         const result = await parseToken(cacheHeader, secret());
 
-        if (result) {
+        if (result?.type === CACHE_TOKEN_TYPE) {
           cache = result;
         }
       }
@@ -130,7 +147,8 @@ export async function POST(request: Request) {
     const createdAt = timestamp ? new Date(timestamp * 1000) : new Date();
     const now = Math.floor(Date.now() / 1000);
 
-    const sessionSalt = hash(startOfMonth(createdAt).toUTCString());
+    const saltRotation = process.env.SALT_ROTATION || 'month';
+    const sessionSalt = getSalt(saltRotation, createdAt);
     const visitSalt = hash(startOfHour(createdAt).toUTCString());
 
     const sessionId = id ? uuid(sourceId, id) : uuid(sourceId, ip, userAgent, sessionSalt);
@@ -268,17 +286,42 @@ export async function POST(request: Request) {
           createdAt,
         });
       }
+    } else if (type === COLLECTION_TYPE.performance) {
+      const base = hostname ? `https://${hostname}` : 'https://localhost';
+      const currentUrl = new URL(url, base);
+      const urlPath = currentUrl.pathname === '/undefined' ? '' : currentUrl.pathname;
+
+      await saveEvent({
+        websiteId: sourceId,
+        sessionId,
+        visitId,
+        urlPath,
+        pageTitle: safeDecodeURIComponent(title),
+        eventType: EVENT_TYPE.performance,
+        browser,
+        os,
+        device,
+        screen,
+        language,
+        country,
+        region,
+        city,
+        lcp,
+        inp,
+        cls,
+        fcp,
+        ttfb,
+        createdAt,
+      });
     }
 
-    const token = createToken({ websiteId, sessionId, visitId, iat }, secret());
+    const token = createToken(
+      { websiteId, sessionId, visitId, iat, type: CACHE_TOKEN_TYPE },
+      secret(),
+    );
 
     return json({ cache: token, sessionId, visitId });
   } catch (e) {
-    const error = serializeError(e);
-
-    // eslint-disable-next-line no-console
-    console.log(error);
-
-    return serverError({ errorObject: error });
+    return serverError(e);
   }
 }
